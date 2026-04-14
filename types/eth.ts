@@ -11,6 +11,7 @@ export interface TransactionResponse {
     address: string;
     wallets: ConnectedWallet[];
     totalTx: number;
+    demo?: boolean;
 }
 
 export interface GraphNode {

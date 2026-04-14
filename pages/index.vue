@@ -37,15 +37,20 @@
                 </v-btn>
             </div>
 
+            <v-alert v-if="error" type="error" variant="tonal" class="mt-3" closable>
+                {{ error }}
+            </v-alert>
+
             <v-alert
-                v-if="error"
-                type="error"
+                v-if="isDemo && centerAddress"
+                type="info"
                 variant="tonal"
+                density="compact"
                 class="mt-3"
                 closable
-                @click:close="error = null"
             >
-                {{ error }}
+                Demo mode — showing generated data. Set
+                <code>ETHERSCAN_API_KEY</code> for live blockchain data.
             </v-alert>
 
             <div v-if="centerAddress" class="mt-2 d-flex align-center ga-2 flex-wrap">
@@ -153,6 +158,7 @@
         nodes,
         links,
         history,
+        isDemo,
         fetchTransactions,
         navigateToWallet,
         goBack,

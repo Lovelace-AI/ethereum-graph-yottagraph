@@ -9,6 +9,7 @@ export function useEthGraph() {
     const nodes = ref<GraphNode[]>([]);
     const links = ref<GraphLink[]>([]);
     const history = ref<string[]>([]);
+    const isDemo = ref(false);
 
     function shortenAddress(addr: string): string {
         return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -62,6 +63,7 @@ export function useEthGraph() {
             centerAddress.value = data.address;
             connectedWallets.value = data.wallets;
             totalTx.value = data.totalTx;
+            isDemo.value = data.demo ?? false;
 
             if (!history.value.includes(normalized)) {
                 history.value.push(normalized);
@@ -99,6 +101,7 @@ export function useEthGraph() {
         nodes: readonly(nodes),
         links: readonly(links),
         history: readonly(history),
+        isDemo: readonly(isDemo),
         fetchTransactions,
         navigateToWallet,
         goBack,
