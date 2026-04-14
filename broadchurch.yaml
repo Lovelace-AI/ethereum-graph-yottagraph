@@ -1,0 +1,30 @@
+# Broadchurch project configuration
+# Auto-generated during tenant provisioning.
+
+gcp:
+  project: broadchurch
+  region: us-central1
+  staging_bucket: broadchurch-agent-staging
+
+tenant:
+  project_name: "ethereum-graph"
+  display_name: "Ethereum graph"
+  org_id: "org_QKIMp4VbCT5zg2fZ"
+  service_account: "tenant-qkimp4vbct5zg2fz@broadchurch.iam.gserviceaccount.com"
+
+gateway:
+  url: "https://broadchurch-portal-194773164895.us-central1.run.app"
+  qs_api_key: "c87596b4b4840016504ea70c62ac6cd948231e617dbc45ba8f68a926f056efcc"
+
+query_server:
+  url: "https://query.news.prod.g.lovelace.ai"
+  audience: "queryserver:api"
+
+auth:
+  client_id: "OSDAd8KQvSaUCBDOqMitpYDVP3F7F6Sw"
+  audience: "queryserver:api"
+
+aether:
+  data_mode: "api-mcp"
+
+agents: {}
