@@ -6,8 +6,38 @@ This app displays a graph of connections between ethereum accounts. The user can
 
 ## Status
 
-Project just created. Run `/build_my_app` in Cursor to start building.
+Initial build complete. Core features implemented:
+
+- Wallet address search with validation
+- Etherscan API integration via server-side proxy (`/api/eth/transactions`)
+- D3 force-directed graph visualization with interactive nodes
+- Node sizing by transaction count, coloring by in/out ratio (green = receiving, red = sending)
+- Hover tooltips showing wallet details (address, tx count, ETH in/out)
+- Click-to-navigate: click any connected wallet to re-center the graph
+- Navigation history with back button and breadcrumb trail
+- Example addresses for quick exploration (Vitalik, Uniswap)
+- Zoom and pan support on the graph
+- Drag to reposition nodes
+- Responsive layout that fills the viewport
 
 ## Modules
 
-_None yet — the agent will populate this as features are built._
+### Pages
+
+- `pages/index.vue` — Single-page app: search input + D3 graph + history breadcrumbs
+
+### Components
+
+- `components/EthGraph.vue` — D3 force-directed graph with zoom, drag, hover tooltips, and click navigation
+
+### Composables
+
+- `composables/useEthGraph.ts` — Graph state management, Etherscan data fetching, navigation history
+
+### Server Routes
+
+- `server/api/eth/transactions.get.ts` — Proxies Etherscan API, aggregates transactions per wallet, returns top 10 by tx count
+
+### Types
+
+- `types/eth.ts` — TypeScript interfaces for wallet data, graph nodes, and graph links
