@@ -17,13 +17,15 @@ import { useElementalClient } from '@yottagraph-app/elemental-api/client';
 
 export interface SchemaFlavor {
     name: string;
-    fid: number;
+    /** String to preserve int64 precision (exceeds Number.MAX_SAFE_INTEGER). */
+    fid: string;
     [key: string]: any;
 }
 
 export interface SchemaProperty {
     name: string;
-    pid: number;
+    /** String to preserve int64 precision (exceeds Number.MAX_SAFE_INTEGER). */
+    pid: string;
     type?: string;
     [key: string]: any;
 }
@@ -40,12 +42,12 @@ function normalizeSchema(res: any): { flavors: SchemaFlavor[]; properties: Schem
 
     const flavors = rawFlavors.map((f: any) => ({
         ...f,
-        fid: f.fid ?? f.findex,
+        fid: String(f.fid ?? f.findex),
     }));
 
     const properties = rawProps.map((p: any) => ({
         ...p,
-        pid: p.pid ?? p.pindex,
+        pid: String(p.pid ?? p.pindex),
     }));
 
     return { flavors, properties };
@@ -79,22 +81,22 @@ export function useElementalSchema() {
         return fetchPromise;
     }
 
-    function flavorByName(name: string): number | null {
+    function flavorByName(name: string): string | null {
         const f = _flavors.value.find((fl) => fl.name === name);
         return f?.fid ?? null;
     }
 
-    function pidByName(name: string): number | null {
+    function pidByName(name: string): string | null {
         const p = _properties.value.find((pr) => pr.name === name);
         return p?.pid ?? null;
     }
 
-    function flavorName(fid: number): string | null {
+    function flavorName(fid: string): string | null {
         const f = _flavors.value.find((fl) => fl.fid === fid);
         return f?.name ?? null;
     }
 
-    function propertyName(pid: number): string | null {
+    function propertyName(pid: string): string | null {
         const p = _properties.value.find((pr) => pr.pid === pid);
         return p?.name ?? null;
     }
@@ -103,7 +105,9 @@ export function useElementalSchema() {
         return _properties.value.filter((p) => {
             const domains: any[] = p.domains ?? p.domain ?? [];
             const fid = flavorByName(typeName);
-            return !domains.length || (fid !== null && domains.includes(fid));
+            if (!domains.length) return true;
+            if (fid === null) return false;
+            return domains.some((d: any) => String(d) === fid);
         });
     }
 

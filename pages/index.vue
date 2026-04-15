@@ -1,150 +1,178 @@
 <template>
-    <div class="home-page">
-        <div class="home-content">
-            <div class="hero-section">
-                <img src="/LL-logo-full-wht.svg" alt="Lovelace" class="hero-logo" />
-                <h1 class="hero-title">{{ appName || 'Welcome to Aether' }}</h1>
-                <p class="hero-subtitle">Your AI-powered workspace is ready.</p>
+    <div class="d-flex flex-column fill-height">
+        <div class="flex-shrink-0 pa-4 pb-2">
+            <div class="search-row">
+                <v-text-field
+                    v-model="addressInput"
+                    label="Ethereum wallet address"
+                    placeholder="0x..."
+                    prepend-inner-icon="mdi-magnify"
+                    variant="outlined"
+                    density="comfortable"
+                    color="primary"
+                    hide-details
+                    clearable
+                    class="search-field"
+                    @keydown.enter="search"
+                    @click:clear="clear"
+                />
+                <v-btn
+                    color="primary"
+                    :loading="loading"
+                    :disabled="!isValidAddress"
+                    @click="search"
+                >
+                    Search
+                </v-btn>
             </div>
+            <div v-if="currentAddress" class="breadcrumb">
+                <v-chip
+                    v-for="item in history"
+                    :key="item"
+                    size="small"
+                    variant="tonal"
+                    class="mr-1"
+                    :color="item === currentAddress ? 'primary' : undefined"
+                    @click="navigateTo(item)"
+                >
+                    {{ truncate(item) }}
+                </v-chip>
+            </div>
+        </div>
 
-            <div class="getting-started">
-                <h2 class="section-title">Getting Started</h2>
-                <div class="steps-grid">
-                    <div class="step-item">
-                        <span class="step-number">1</span>
-                        <div>
-                            <div class="step-title">Describe what you want</div>
-                            <div class="step-desc">
-                                Edit <code>DESIGN.md</code> with your project vision. The AI agent
-                                reads this first to understand what to build.
-                            </div>
-                        </div>
-                    </div>
-                    <div class="step-item">
-                        <span class="step-number">2</span>
-                        <div>
-                            <div class="step-title">Build it</div>
-                            <div class="step-desc">
-                                Run <code>/build_my_app</code> in Cursor. The agent will design and
-                                implement your app based on the brief.
-                            </div>
-                        </div>
-                    </div>
-                    <div class="step-item">
-                        <span class="step-number">3</span>
-                        <div>
-                            <div class="step-title">Deploy</div>
-                            <div class="step-desc">
-                                Push to main to auto-deploy on Vercel. Use
-                                <code>/deploy_agent</code> or <code>/deploy_mcp</code> for backend
-                                services.
-                            </div>
-                        </div>
-                    </div>
-                </div>
+        <div class="flex-grow-1 overflow-hidden graph-area">
+            <v-progress-circular
+                v-if="loading"
+                indeterminate
+                color="primary"
+                size="48"
+                class="center-loader"
+            />
+            <v-alert
+                v-else-if="error"
+                type="error"
+                variant="tonal"
+                closable
+                class="ma-4"
+                @click:close="error = null"
+            >
+                {{ error }}
+            </v-alert>
+            <div v-else-if="!graphData" class="empty-state">
+                <v-icon size="64" color="rgba(255,255,255,0.15)">mdi-graph-outline</v-icon>
+                <p class="mt-4">Enter an Ethereum address to explore its transfer connections</p>
             </div>
+            <WalletGraph v-else :data="graphData" @select-wallet="onSelectWallet" />
         </div>
     </div>
 </template>
 
 <script setup lang="ts">
-    const { appName } = useAppInfo();
+    import type { WalletGraphResponse } from '~/server/api/wallet/[address].get';
+
+    const addressInput = ref('');
+    const currentAddress = ref<string | null>(null);
+    const loading = ref(false);
+    const error = ref<string | null>(null);
+    const graphData = ref<WalletGraphResponse | null>(null);
+    const history = ref<string[]>([]);
+
+    const isValidAddress = computed(() =>
+        /^0x[0-9a-fA-F]{40}$/.test(addressInput.value?.trim() ?? '')
+    );
+
+    function truncate(addr: string): string {
+        return addr.length > 12 ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : addr;
+    }
+
+    async function fetchWallet(address: string) {
+        const normalized = address.toLowerCase().trim();
+        loading.value = true;
+        error.value = null;
+
+        try {
+            const data = await $fetch<WalletGraphResponse>(`/api/wallet/${normalized}`);
+            graphData.value = data;
+            currentAddress.value = normalized;
+            if (!history.value.includes(normalized)) {
+                history.value.push(normalized);
+            }
+            addressInput.value = normalized;
+        } catch (e: any) {
+            const msg = e?.data?.statusMessage || e?.message || 'Failed to load wallet data';
+            error.value = msg;
+            graphData.value = null;
+        } finally {
+            loading.value = false;
+        }
+    }
+
+    function search() {
+        const addr = addressInput.value?.trim();
+        if (addr && /^0x[0-9a-fA-F]{40}$/.test(addr)) {
+            fetchWallet(addr);
+        }
+    }
+
+    function clear() {
+        graphData.value = null;
+        currentAddress.value = null;
+        error.value = null;
+    }
+
+    function onSelectWallet(address: string) {
+        addressInput.value = address;
+        fetchWallet(address);
+    }
+
+    function navigateTo(address: string) {
+        addressInput.value = address;
+        fetchWallet(address);
+    }
 </script>
 
 <style scoped>
-    .home-page {
-        height: 100%;
-        overflow-y: auto;
+    .search-row {
         display: flex;
-        justify-content: center;
-        padding: 48px 24px;
-    }
-
-    .home-content {
+        gap: 12px;
+        align-items: center;
         max-width: 720px;
-        width: 100%;
     }
 
-    .hero-section {
-        text-align: center;
-        margin-bottom: 48px;
+    .search-field {
+        flex: 1;
     }
 
-    .hero-logo {
-        height: 2rem;
-        width: auto;
-        margin-bottom: 24px;
-        opacity: 0.6;
+    .search-field :deep(input) {
+        font-family: var(--font-mono, monospace);
+        font-size: 13px;
     }
 
-    .hero-title {
-        font-family: var(--font-headline);
-        font-weight: 400;
-        font-size: 2rem;
-        letter-spacing: 0.02em;
-        margin-bottom: 8px;
+    .breadcrumb {
+        margin-top: 8px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
     }
 
-    .hero-subtitle {
-        color: var(--lv-silver);
-        font-size: 1.1rem;
+    .graph-area {
+        position: relative;
     }
 
-    .getting-started {
-        margin-bottom: 48px;
+    .center-loader {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
     }
 
-    .section-title {
-        font-family: var(--font-headline);
-        font-weight: 400;
-        font-size: 1.1rem;
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
-        color: var(--lv-silver);
-        margin-bottom: 20px;
-    }
-
-    .steps-grid {
+    .empty-state {
         display: flex;
         flex-direction: column;
-        gap: 16px;
-    }
-
-    .step-item {
-        display: flex;
-        gap: 16px;
-        align-items: flex-start;
-    }
-
-    .step-number {
-        flex-shrink: 0;
-        width: 28px;
-        height: 28px;
-        border-radius: 50%;
-        background: var(--lv-surface);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        display: flex;
         align-items: center;
         justify-content: center;
-        font-family: var(--font-mono);
-        font-size: 0.8rem;
-        color: var(--lv-green);
-        margin-top: 2px;
-    }
-
-    .step-title {
-        font-weight: 500;
-        margin-bottom: 2px;
-    }
-
-    .step-desc {
-        color: var(--lv-silver);
-        font-size: 0.875rem;
-        line-height: 1.4;
-    }
-
-    .step-desc code {
-        font-size: 0.85em;
-        padding: 1px 5px;
+        height: 100%;
+        color: rgba(255, 255, 255, 0.4);
+        font-size: 14px;
     }
 </style>

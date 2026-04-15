@@ -2,6 +2,7 @@ import { defineNuxtPlugin } from '#app';
 import { configureElementalClient } from '@yottagraph-app/elemental-api/config';
 import { useUserState } from '~/composables/useUserState';
 import { formatUrl } from '~/utils/formatUrl';
+import { safeJsonParse } from '~/utils/safeJson';
 
 export default defineNuxtPlugin(() => {
     const config = useRuntimeConfig();
@@ -46,9 +47,8 @@ export default defineNuxtPlugin(() => {
             } else {
                 const contentType = response.headers.get('content-type');
                 if (contentType?.includes('application/json')) {
-                    data = await response.json();
-                } else if (contentType?.includes('text/')) {
-                    data = await response.text();
+                    const text = await response.text();
+                    data = safeJsonParse(text);
                 } else {
                     data = await response.text();
                 }

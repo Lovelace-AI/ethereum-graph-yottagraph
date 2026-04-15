@@ -8,8 +8,30 @@ IMPORTANT NOTE: Information about using the ethereum data (schema and data dicti
 
 ## Status
 
-Project just created. Run `/build_my_app` in Cursor to start building.
+Initial build complete. Single-page app with:
+
+- Search bar for Ethereum wallet addresses (0x...)
+- D3 force-directed graph showing ERC-20 transfer connections
+- Server route queries the Lovelace Knowledge Graph (pip.prod)
+- Int64 FID/PID precision preserved through safe JSON parsing
+- Click-to-explore navigation with breadcrumb history
 
 ## Modules
 
-_None yet — the agent will populate this as features are built._
+### Data pipeline
+
+- `server/api/wallet/[address].get.ts` — Queries KG for wallet entity, aggregates ERC-20 transfer relationships, returns top 10 counterparties
+- `server/utils/elementalGateway.ts` — Server-side gateway helper with safe int64 JSON parsing
+- `server/utils/safeJson.ts` — JSON parser preserving int64 precision
+
+### UI
+
+- `pages/index.vue` — Main page with search bar and graph container
+- `components/WalletGraph.vue` — D3 force-directed graph visualization
+
+### Int64 precision fix
+
+- `utils/safeJson.ts` — Client-side safe JSON parser
+- `plugins/elemental-client.client.ts` — Patched to use safe parser
+- `composables/useElementalSchema.ts` — FIDs/PIDs typed as strings
+- `utils/elementalHelpers.ts` — Gateway fetch with safe parsing, expression builders
