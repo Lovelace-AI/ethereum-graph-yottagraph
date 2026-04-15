@@ -61,14 +61,39 @@
             <div v-else-if="!graphData" class="empty-state">
                 <v-icon size="64" color="rgba(255,255,255,0.15)">mdi-graph-outline</v-icon>
                 <p class="mt-4">Enter an Ethereum address to explore its transfer connections</p>
+                <div class="example-wallets mt-6">
+                    <p class="examples-label">Try an example</p>
+                    <v-chip
+                        v-for="addr in exampleAddresses"
+                        :key="addr"
+                        variant="outlined"
+                        color="primary"
+                        size="small"
+                        class="example-chip"
+                        @click="fetchWallet(addr)"
+                    >
+                        {{ truncate(addr) }}
+                    </v-chip>
+                </div>
             </div>
-            <WalletGraph v-else :data="graphData" @select-wallet="onSelectWallet" />
+            <template v-else>
+                <div v-if="graphData.isSample" class="sample-banner">
+                    Showing a sample of connections
+                </div>
+                <WalletGraph :data="graphData" @select-wallet="onSelectWallet" />
+            </template>
         </div>
     </div>
 </template>
 
 <script setup lang="ts">
     import type { WalletGraphResponse } from '~/server/api/wallet/[address].get';
+
+    const exampleAddresses = [
+        '0x5b71d5fd6bb118665582dd87922bf3b9de6c75f9',
+        '0x7bd5fea8dc1d01a85e7aeac8a7de4aeb22513b27',
+        '0x5b5ecfc8122ba166b21d6ea26268ef97e09b2e9f',
+    ];
 
     const addressInput = ref('');
     const currentAddress = ref<string | null>(null);
@@ -174,5 +199,32 @@
         height: 100%;
         color: rgba(255, 255, 255, 0.4);
         font-size: 14px;
+    }
+
+    .example-wallets {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .examples-label {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: rgba(255, 255, 255, 0.3);
+    }
+
+    .example-chip {
+        font-family: var(--font-mono, monospace);
+        font-size: 12px;
+    }
+
+    .sample-banner {
+        text-align: center;
+        padding: 6px 0 2px;
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.4);
+        letter-spacing: 0.02em;
     }
 </style>

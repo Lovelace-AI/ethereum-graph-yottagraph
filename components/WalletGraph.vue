@@ -9,10 +9,10 @@
             <div class="tooltip-address">{{ tooltip.address }}</div>
             <div v-if="tooltip.name" class="tooltip-name">{{ tooltip.name }}</div>
             <div v-if="tooltip.labels" class="tooltip-labels">{{ tooltip.labels }}</div>
-            <div class="tooltip-stats">
-                <span>{{ tooltip.txCount }} transactions</span>
-                <span v-if="tooltip.outCount" class="stat-out">{{ tooltip.outCount }} out</span>
-                <span v-if="tooltip.inCount" class="stat-in">{{ tooltip.inCount }} in</span>
+            <div v-if="tooltip.direction" class="tooltip-direction">
+                <span :class="'dir-' + tooltip.direction">{{
+                    directionLabel(tooltip.direction)
+                }}</span>
             </div>
             <div v-if="!tooltip.isCenter" class="tooltip-hint">Click to explore</div>
         </div>
@@ -21,7 +21,10 @@
 
 <script setup lang="ts">
     import * as d3 from 'd3';
-    import type { WalletGraphResponse } from '~/server/api/wallet/[address].get';
+    import type {
+        WalletGraphResponse,
+        ConnectionDirection,
+    } from '~/server/api/wallet/[address].get';
 
     interface GraphNode extends d3.SimulationNodeDatum {
         id: string;
@@ -29,9 +32,7 @@
         name: string | null;
         labels: string | null;
         isCenter: boolean;
-        txCount: number;
-        outCount: number;
-        inCount: number;
+        direction: ConnectionDirection | null;
         radius: number;
     }
 
@@ -60,14 +61,25 @@
         address: '',
         name: null as string | null,
         labels: null as string | null,
-        txCount: 0,
-        outCount: 0,
-        inCount: 0,
+        direction: null as ConnectionDirection | null,
         isCenter: false,
     });
 
     let simulation: d3.Simulation<GraphNode, GraphLink> | null = null;
     let hoveredNode: GraphNode | null = null;
+
+    const DIRECTION_COLORS: Record<string, string> = {
+        incoming: '#3fea00',
+        outgoing: '#ef4444',
+        both: '#f59e0b',
+    };
+
+    function directionLabel(dir: ConnectionDirection | null): string {
+        if (dir === 'incoming') return '← Sends to this wallet';
+        if (dir === 'outgoing') return '→ Receives from this wallet';
+        if (dir === 'both') return '↔ Both directions';
+        return '';
+    }
 
     function truncateAddress(addr: string): string {
         if (!addr || addr.length < 12) return addr;
@@ -76,13 +88,7 @@
 
     function nodeColor(node: GraphNode): string {
         if (node.isCenter) return '#6b7280';
-        const total = node.outCount + node.inCount;
-        if (total === 0) return '#6b7280';
-        const ratio = node.inCount / total;
-        const r = Math.round(239 * (1 - ratio) + 63 * ratio);
-        const g = Math.round(68 * (1 - ratio) + 234 * ratio);
-        const b = Math.round(68 * (1 - ratio) + 0 * ratio);
-        return `rgb(${r},${g},${b})`;
+        return DIRECTION_COLORS[node.direction ?? 'outgoing'] ?? '#6b7280';
     }
 
     function buildGraph(data: WalletGraphResponse) {
@@ -100,7 +106,7 @@
             simulation = null;
         }
 
-        const maxTx = Math.max(1, ...data.connections.map((c) => c.txCount));
+        const NODE_RADIUS = 22;
 
         const nodes: GraphNode[] = [
             {
@@ -109,9 +115,7 @@
                 name: data.center.name,
                 labels: data.center.labels,
                 isCenter: true,
-                txCount: data.connections.reduce((sum, c) => sum + c.txCount, 0),
-                outCount: data.connections.reduce((sum, c) => sum + c.outCount, 0),
-                inCount: data.connections.reduce((sum, c) => sum + c.inCount, 0),
+                direction: null,
                 radius: 32,
                 fx: width.value / 2,
                 fy: height.value / 2,
@@ -122,10 +126,8 @@
                 name: c.name,
                 labels: c.labels,
                 isCenter: false,
-                txCount: c.txCount,
-                outCount: c.outCount,
-                inCount: c.inCount,
-                radius: 14 + (c.txCount / maxTx) * 30,
+                direction: c.direction,
+                radius: NODE_RADIUS,
             })),
         ];
 
@@ -254,9 +256,7 @@
         tooltip.address = hoveredNode.address;
         tooltip.name = hoveredNode.name;
         tooltip.labels = hoveredNode.labels;
-        tooltip.txCount = hoveredNode.txCount;
-        tooltip.outCount = hoveredNode.outCount;
-        tooltip.inCount = hoveredNode.inCount;
+        tooltip.direction = hoveredNode.direction;
         tooltip.isCenter = hoveredNode.isCenter;
     }
 
@@ -334,19 +334,21 @@
         margin-top: 2px;
     }
 
-    .tooltip-stats {
+    .tooltip-direction {
         margin-top: 6px;
-        display: flex;
-        gap: 10px;
-        color: rgba(255, 255, 255, 0.8);
+        font-size: 11px;
     }
 
-    .stat-out {
+    .dir-incoming {
+        color: #3fea00;
+    }
+
+    .dir-outgoing {
         color: #ef4444;
     }
 
-    .stat-in {
-        color: #3fea00;
+    .dir-both {
+        color: #f59e0b;
     }
 
     .tooltip-hint {

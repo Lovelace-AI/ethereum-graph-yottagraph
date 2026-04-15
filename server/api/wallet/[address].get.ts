@@ -1,17 +1,16 @@
 /**
  * GET /api/wallet/:address
  *
- * Finds an Ethereum address in the knowledge graph, retrieves its
- * ERC-20 transfer relationships, aggregates by counterparty, and
- * returns the top connections for graph rendering.
+ * Finds an Ethereum address in the knowledge graph, uses linked queries
+ * to sample connected wallets, and returns them for graph rendering.
+ *
+ * Uses bounded linked queries (limit 10 per direction) instead of
+ * fetching full transfer lists — fast and safe for any wallet size.
  */
 
-import {
-    elementalFind,
-    elementalGetProperties,
-    getFidByName,
-    getPidByName,
-} from '~/server/utils/elementalGateway';
+import { elementalFind, elementalGetProperties, getSchema } from '~/server/utils/elementalGateway';
+
+export type ConnectionDirection = 'outgoing' | 'incoming' | 'both';
 
 interface WalletConnection {
     neid: string;
@@ -19,9 +18,7 @@ interface WalletConnection {
     name: string | null;
     labels: string | null;
     isContract: boolean;
-    txCount: number;
-    outCount: number;
-    inCount: number;
+    direction: ConnectionDirection;
 }
 
 export interface WalletGraphResponse {
@@ -32,9 +29,71 @@ export interface WalletGraphResponse {
         labels: string | null;
     };
     connections: WalletConnection[];
+    isSample: boolean;
 }
 
-const MAX_CONNECTIONS = 10;
+const SAMPLE_PER_DIRECTION = 10;
+
+// ---------------------------------------------------------------------------
+// Caches
+// ---------------------------------------------------------------------------
+
+interface EthPids {
+    addressId: string;
+    transfer: string;
+    addressName: string | null;
+    addressLabels: string | null;
+    isContract: string | null;
+}
+
+let _pidCache: EthPids | null = null;
+
+async function getEthPids(): Promise<EthPids> {
+    if (_pidCache) return _pidCache;
+    const schema = await getSchema();
+    const pidOf = (name: string) => {
+        const p = schema.properties.find((pr: any) => pr.name === name);
+        return p ? String(p.pid) : null;
+    };
+    _pidCache = {
+        addressId: pidOf('eth_address_id')!,
+        transfer: pidOf('erc20_transfer')!,
+        addressName: pidOf('eth_address_name'),
+        addressLabels: pidOf('eth_address_labels'),
+        isContract: pidOf('eth_is_contract'),
+    };
+    return _pidCache;
+}
+
+const addressToNeid = new Map<string, string>();
+
+function cacheAddress(address: string, neid: string) {
+    addressToNeid.set(address.toLowerCase(), neid);
+}
+
+async function resolveAddress(address: string, pids: EthPids): Promise<string | null> {
+    const cached = addressToNeid.get(address);
+    if (cached) return cached;
+
+    const expr = `{"type":"comparison","comparison":{"operator":"eq","pid":${pids.addressId},"value":"${address}"}}`;
+    try {
+        const eids = await elementalFind(expr, 1);
+        if (eids.length) {
+            cacheAddress(address, eids[0]);
+            return eids[0];
+        }
+    } catch (e: any) {
+        if (e?.message?.includes('category') && e?.message?.includes('not found')) {
+            return null;
+        }
+        throw e;
+    }
+    return null;
+}
+
+// ---------------------------------------------------------------------------
+// Handler
+// ---------------------------------------------------------------------------
 
 export default defineEventHandler(async (event): Promise<WalletGraphResponse> => {
     const address = getRouterParam(event, 'address')?.toLowerCase();
@@ -45,105 +104,56 @@ export default defineEventHandler(async (event): Promise<WalletGraphResponse> =>
         });
     }
 
-    const [
-        ethAddressIdPid,
-        erc20TransferPid,
-        ethAddressNamePid,
-        ethAddressLabelsPid,
-        ethIsContractPid,
-    ] = await Promise.all([
-        getPidByName('eth_address_id'),
-        getPidByName('erc20_transfer'),
-        getPidByName('eth_address_name'),
-        getPidByName('eth_address_labels'),
-        getPidByName('eth_is_contract'),
-    ]);
-
-    if (!ethAddressIdPid || !erc20TransferPid) {
+    const pids = await getEthPids();
+    if (!pids.addressId || !pids.transfer) {
         throw createError({
             statusCode: 503,
             statusMessage: 'Schema not available: eth_address properties not found.',
         });
     }
 
-    // Step 1: Find the entity by its eth_address_id
-    const expr = `{"type":"comparison","comparison":{"operator":"eq","pid":${ethAddressIdPid},"value":"${address}"}}`;
-    const entityEids = await elementalFind(expr, 1);
-
-    if (!entityEids.length) {
+    const centerNeid = await resolveAddress(address, pids);
+    if (!centerNeid) {
         throw createError({
             statusCode: 404,
             statusMessage: `Ethereum address ${address} not found in the knowledge graph.`,
         });
     }
 
-    const centerNeid = entityEids[0];
-
-    // Step 2: Get center wallet properties
-    const propPids = [ethAddressIdPid, ethAddressNamePid, ethAddressLabelsPid].filter(
+    // Parallel: center props + outgoing sample + incoming sample
+    const identityPids = [pids.addressId, pids.addressName, pids.addressLabels].filter(
         Boolean
     ) as string[];
-    const centerProps = await elementalGetProperties([centerNeid], propPids);
+
+    const outExpr = `{"type":"linked","linked":{"from_entity":"${centerNeid}","distance":1,"pids":[${pids.transfer}],"direction":"outgoing"}}`;
+    const inExpr = `{"type":"linked","linked":{"to_entity":"${centerNeid}","distance":1,"pids":[${pids.transfer}],"direction":"incoming"}}`;
+
+    const [centerProps, outNeids, inNeids] = await Promise.all([
+        elementalGetProperties([centerNeid], identityPids),
+        elementalFind(outExpr, SAMPLE_PER_DIRECTION).catch(() => [] as string[]),
+        elementalFind(inExpr, SAMPLE_PER_DIRECTION).catch(() => [] as string[]),
+    ]);
+
     const centerAddress =
-        centerProps.find((v) => String(v.pid) === ethAddressIdPid)?.value ?? address;
-    const centerName = centerProps.find((v) => String(v.pid) === ethAddressNamePid)?.value ?? null;
+        centerProps.find((v) => String(v.pid) === pids.addressId)?.value ?? address;
+    const centerName = centerProps.find((v) => String(v.pid) === pids.addressName)?.value ?? null;
     const centerLabels =
-        centerProps.find((v) => String(v.pid) === ethAddressLabelsPid)?.value ?? null;
+        centerProps.find((v) => String(v.pid) === pids.addressLabels)?.value ?? null;
 
-    // Step 3: Get outgoing transfers (this wallet → others)
-    const outgoing = await elementalGetProperties([centerNeid], [erc20TransferPid]);
-    const counterpartyMap = new Map<string, { outCount: number; inCount: number }>();
+    // Merge directions — a NEID in both lists is "both"
+    const outSet = new Set(outNeids.filter((n) => n !== centerNeid));
+    const inSet = new Set(inNeids.filter((n) => n !== centerNeid));
+    const allNeids = new Set([...outSet, ...inSet]);
 
-    for (const t of outgoing) {
-        const targetNeid = String(t.value).padStart(20, '0');
-        const entry = counterpartyMap.get(targetNeid) ?? { outCount: 0, inCount: 0 };
-        entry.outCount++;
-        counterpartyMap.set(targetNeid, entry);
-    }
+    const directionOf = (neid: string): ConnectionDirection => {
+        const isOut = outSet.has(neid);
+        const isIn = inSet.has(neid);
+        if (isOut && isIn) return 'both';
+        if (isIn) return 'incoming';
+        return 'outgoing';
+    };
 
-    // Step 4: Get incoming transfers (others → this wallet) via linked expression
-    const ethAddressFid = await getFidByName('eth_address');
-    if (ethAddressFid) {
-        const linkedExpr = `{"type":"linked","linked":{"to_entity":"${centerNeid}","distance":1,"pids":[${erc20TransferPid}],"direction":"incoming"}}`;
-        try {
-            const incomingNeids = await elementalFind(linkedExpr, 200);
-            for (const senderNeid of incomingNeids) {
-                if (senderNeid === centerNeid) continue;
-                const senderTransfers = await elementalGetProperties(
-                    [senderNeid],
-                    [erc20TransferPid]
-                );
-                const toUs = senderTransfers.filter(
-                    (t) => String(t.value).padStart(20, '0') === centerNeid
-                );
-                if (toUs.length > 0) {
-                    const entry = counterpartyMap.get(senderNeid) ?? {
-                        outCount: 0,
-                        inCount: 0,
-                    };
-                    entry.inCount += toUs.length;
-                    counterpartyMap.set(senderNeid, entry);
-                }
-            }
-        } catch (e) {
-            // linked query may not be supported for property-layer relationships;
-            // fall back to outgoing-only data
-            console.warn('[wallet] linked query failed, using outgoing-only:', e);
-        }
-    }
-
-    // Step 5: Sort by total transactions, take top N
-    const sorted = [...counterpartyMap.entries()]
-        .map(([neid, counts]) => ({
-            neid,
-            txCount: counts.outCount + counts.inCount,
-            outCount: counts.outCount,
-            inCount: counts.inCount,
-        }))
-        .sort((a, b) => b.txCount - a.txCount)
-        .slice(0, MAX_CONNECTIONS);
-
-    if (!sorted.length) {
+    if (allNeids.size === 0) {
         return {
             center: {
                 neid: centerNeid,
@@ -152,46 +162,47 @@ export default defineEventHandler(async (event): Promise<WalletGraphResponse> =>
                 labels: centerLabels,
             },
             connections: [],
+            isSample: false,
         };
     }
 
-    // Step 6: Get properties for connected wallets
-    const connNeids = sorted.map((s) => s.neid);
-    const connProps = await elementalGetProperties(connNeids, propPids);
+    // One call to get identity props for all connected wallets
+    const connNeidList = [...allNeids];
+    const allPropPids = [...identityPids, ...(pids.isContract ? [pids.isContract] : [])];
+    const connProps = await elementalGetProperties(connNeidList, allPropPids);
 
     const connPropsByNeid = new Map<string, Record<string, any>>();
     for (const v of connProps) {
-        const neid = v.eid;
-        if (!connPropsByNeid.has(neid)) connPropsByNeid.set(neid, {});
-        const bag = connPropsByNeid.get(neid)!;
-        if (String(v.pid) === ethAddressIdPid) bag.address = v.value;
-        if (String(v.pid) === ethAddressNamePid) bag.name = v.value;
-        if (String(v.pid) === ethAddressLabelsPid) bag.labels = v.value;
+        if (!connPropsByNeid.has(v.eid)) connPropsByNeid.set(v.eid, {});
+        const bag = connPropsByNeid.get(v.eid)!;
+        const pidStr = String(v.pid);
+        if (pidStr === pids.addressId) bag.address = v.value;
+        if (pidStr === pids.addressName) bag.name = v.value;
+        if (pidStr === pids.addressLabels) bag.labels = v.value;
+        if (pidStr === pids.isContract) bag.isContract = v.value === 1 || v.value === 1.0;
     }
 
-    // Also get isContract if available
-    if (ethIsContractPid) {
-        const contractProps = await elementalGetProperties(connNeids, [ethIsContractPid]);
-        for (const v of contractProps) {
-            const bag = connPropsByNeid.get(v.eid) ?? {};
-            bag.isContract = v.value === 1 || v.value === 1.0;
-            connPropsByNeid.set(v.eid, bag);
+    const connections: WalletConnection[] = connNeidList.map((neid) => {
+        const p = connPropsByNeid.get(neid) ?? {};
+        return {
+            neid,
+            address: p.address ?? neid,
+            name: p.name ?? null,
+            labels: p.labels ?? null,
+            isContract: p.isContract ?? false,
+            direction: directionOf(neid),
+        };
+    });
+
+    // Pre-cache connected addresses for fast click-to-explore
+    for (const conn of connections) {
+        if (conn.address.startsWith('0x')) {
+            cacheAddress(conn.address, conn.neid);
         }
     }
 
-    const connections: WalletConnection[] = sorted.map((s) => {
-        const props = connPropsByNeid.get(s.neid) ?? {};
-        return {
-            neid: s.neid,
-            address: props.address ?? s.neid,
-            name: props.name ?? null,
-            labels: props.labels ?? null,
-            isContract: props.isContract ?? false,
-            txCount: s.txCount,
-            outCount: s.outCount,
-            inCount: s.inCount,
-        };
-    });
+    const isSample =
+        outNeids.length >= SAMPLE_PER_DIRECTION || inNeids.length >= SAMPLE_PER_DIRECTION;
 
     return {
         center: {
@@ -201,5 +212,6 @@ export default defineEventHandler(async (event): Promise<WalletGraphResponse> =>
             labels: centerLabels,
         },
         connections,
+        isSample,
     };
 });
