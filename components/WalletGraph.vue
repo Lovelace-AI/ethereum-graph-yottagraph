@@ -6,8 +6,9 @@
             class="graph-tooltip"
             :style="{ left: tooltip.x + 'px', top: tooltip.y + 'px' }"
         >
-            <div class="tooltip-address">{{ tooltip.address }}</div>
+            <div v-if="tooltip.ownedBy" class="tooltip-owned-by">{{ tooltip.ownedBy }}</div>
             <div v-if="tooltip.name" class="tooltip-name">{{ tooltip.name }}</div>
+            <div class="tooltip-address">{{ tooltip.address }}</div>
             <div v-if="tooltip.labels" class="tooltip-labels">{{ tooltip.labels }}</div>
             <div v-if="tooltip.direction" class="tooltip-direction">
                 <span :class="'dir-' + tooltip.direction">{{
@@ -30,6 +31,7 @@
         id: string;
         address: string;
         name: string | null;
+        ownedBy: string | null;
         labels: string | null;
         isCenter: boolean;
         direction: ConnectionDirection | null;
@@ -60,6 +62,7 @@
         y: 0,
         address: '',
         name: null as string | null,
+        ownedBy: null as string | null,
         labels: null as string | null,
         direction: null as ConnectionDirection | null,
         isCenter: false,
@@ -113,6 +116,7 @@
                 id: data.center.neid,
                 address: data.center.address,
                 name: data.center.name,
+                ownedBy: data.center.ownedBy,
                 labels: data.center.labels,
                 isCenter: true,
                 direction: null,
@@ -124,6 +128,7 @@
                 id: c.neid,
                 address: c.address,
                 name: c.name,
+                ownedBy: c.ownedBy,
                 labels: c.labels,
                 isCenter: false,
                 direction: c.direction,
@@ -185,12 +190,15 @@
 
         nodeGroup
             .append('text')
-            .text((d) => d.name || truncateAddress(d.address))
+            .text((d) => d.ownedBy || d.name || truncateAddress(d.address))
             .attr('text-anchor', 'middle')
             .attr('dy', (d) => d.radius + 16)
-            .attr('fill', 'rgba(255,255,255,0.7)')
-            .attr('font-size', '11px')
-            .attr('font-family', 'var(--font-mono, monospace)');
+            .attr('fill', (d) => (d.ownedBy || d.name ? '#e5e5e5' : 'rgba(255,255,255,0.5)'))
+            .attr('font-size', (d) => (d.ownedBy ? '12px' : '11px'))
+            .attr('font-weight', (d) => (d.ownedBy ? '600' : '400'))
+            .attr('font-family', (d) =>
+                d.ownedBy || d.name ? 'inherit' : 'var(--font-mono, monospace)'
+            );
 
         simulation = d3
             .forceSimulation<GraphNode>(nodes)
@@ -255,6 +263,7 @@
         tooltip.y = event.clientY - 10;
         tooltip.address = hoveredNode.address;
         tooltip.name = hoveredNode.name;
+        tooltip.ownedBy = hoveredNode.ownedBy;
         tooltip.labels = hoveredNode.labels;
         tooltip.direction = hoveredNode.direction;
         tooltip.isCenter = hoveredNode.isCenter;
@@ -320,6 +329,12 @@
         font-size: 11px;
         color: rgba(255, 255, 255, 0.6);
         word-break: break-all;
+    }
+
+    .tooltip-owned-by {
+        font-weight: 700;
+        font-size: 14px;
+        color: #ffffff;
     }
 
     .tooltip-name {

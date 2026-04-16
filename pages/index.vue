@@ -40,7 +40,7 @@
             </div>
         </div>
 
-        <div class="flex-grow-1 overflow-hidden graph-area">
+        <div class="flex-grow-1 overflow-hidden content-area">
             <v-progress-circular
                 v-if="loading"
                 indeterminate
@@ -77,10 +77,33 @@
                 </div>
             </div>
             <template v-else>
-                <div v-if="graphData.isSample" class="sample-banner">
-                    Showing a sample of connections
+                <div class="tabs-header">
+                    <v-tabs v-model="activeTab" density="compact" color="primary">
+                        <v-tab value="graph">
+                            <v-icon start size="small">mdi-graph-outline</v-icon>
+                            Graph
+                        </v-tab>
+                        <v-tab value="table">
+                            <v-icon start size="small">mdi-table</v-icon>
+                            Table
+                        </v-tab>
+                    </v-tabs>
+                    <span v-if="graphData.isSample" class="sample-banner">
+                        Showing a sample of connections
+                    </span>
                 </div>
-                <WalletGraph :data="graphData" @select-wallet="onSelectWallet" />
+                <div class="tab-content">
+                    <WalletGraph
+                        v-show="activeTab === 'graph'"
+                        :data="graphData"
+                        @select-wallet="onSelectWallet"
+                    />
+                    <WalletTable
+                        v-show="activeTab === 'table'"
+                        :data="graphData"
+                        @select-wallet="onSelectWallet"
+                    />
+                </div>
             </template>
         </div>
     </div>
@@ -101,6 +124,7 @@
     const error = ref<string | null>(null);
     const graphData = ref<WalletGraphResponse | null>(null);
     const history = ref<string[]>([]);
+    const activeTab = ref('graph');
 
     const isValidAddress = computed(() =>
         /^0x[0-9a-fA-F]{40}$/.test(addressInput.value?.trim() ?? '')
@@ -180,8 +204,10 @@
         gap: 4px;
     }
 
-    .graph-area {
+    .content-area {
         position: relative;
+        display: flex;
+        flex-direction: column;
     }
 
     .center-loader {
@@ -220,11 +246,23 @@
         font-size: 12px;
     }
 
+    .tabs-header {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 0 16px;
+        flex-shrink: 0;
+    }
+
     .sample-banner {
-        text-align: center;
-        padding: 6px 0 2px;
         font-size: 12px;
         color: rgba(255, 255, 255, 0.4);
         letter-spacing: 0.02em;
+    }
+
+    .tab-content {
+        flex: 1;
+        overflow: hidden;
+        position: relative;
     }
 </style>

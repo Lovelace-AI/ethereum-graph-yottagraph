@@ -16,9 +16,12 @@ interface WalletConnection {
     neid: string;
     address: string;
     name: string | null;
+    ownedBy: string | null;
     labels: string | null;
     isContract: boolean;
     direction: ConnectionDirection;
+    outCount: number;
+    inCount: number;
 }
 
 export interface WalletGraphResponse {
@@ -26,6 +29,7 @@ export interface WalletGraphResponse {
         neid: string;
         address: string;
         name: string | null;
+        ownedBy: string | null;
         labels: string | null;
     };
     connections: WalletConnection[];
@@ -42,6 +46,7 @@ interface EthPids {
     addressId: string;
     transfer: string;
     addressName: string | null;
+    ownedBy: string | null;
     addressLabels: string | null;
     isContract: string | null;
 }
@@ -59,6 +64,7 @@ async function getEthPids(): Promise<EthPids> {
         addressId: pidOf('eth_address_id')!,
         transfer: pidOf('erc20_transfer')!,
         addressName: pidOf('eth_address_name'),
+        ownedBy: pidOf('owned_by'),
         addressLabels: pidOf('eth_address_labels'),
         isContract: pidOf('eth_is_contract'),
     };
@@ -120,28 +126,42 @@ export default defineEventHandler(async (event): Promise<WalletGraphResponse> =>
         });
     }
 
-    // Parallel: center props + outgoing sample + incoming sample
-    const identityPids = [pids.addressId, pids.addressName, pids.addressLabels].filter(
-        Boolean
-    ) as string[];
+    const identityPids = [
+        pids.addressId,
+        pids.addressName,
+        pids.ownedBy,
+        pids.addressLabels,
+    ].filter(Boolean) as string[];
 
-    const outExpr = `{"type":"linked","linked":{"from_entity":"${centerNeid}","distance":1,"pids":[${pids.transfer}],"direction":"outgoing"}}`;
+    // Outgoing: getProperties returns center's transfer targets (NEIDs).
+    // Incoming: linked query finds entities whose transfers point at center.
+    // (from_entity linked queries don't work for property-layer relationships.)
+    const CANDIDATE_LIMIT = 50;
     const inExpr = `{"type":"linked","linked":{"to_entity":"${centerNeid}","distance":1,"pids":[${pids.transfer}],"direction":"incoming"}}`;
 
-    const [centerProps, outNeids, inNeids] = await Promise.all([
+    const [centerProps, centerTransfers, inNeids] = await Promise.all([
         elementalGetProperties([centerNeid], identityPids),
-        elementalFind(outExpr, SAMPLE_PER_DIRECTION).catch(() => [] as string[]),
-        elementalFind(inExpr, SAMPLE_PER_DIRECTION).catch(() => [] as string[]),
+        elementalGetProperties([centerNeid], [pids.transfer]).catch(() => [] as any[]),
+        elementalFind(inExpr, CANDIDATE_LIMIT).catch(() => [] as string[]),
     ]);
 
     const centerAddress =
         centerProps.find((v) => String(v.pid) === pids.addressId)?.value ?? address;
     const centerName = centerProps.find((v) => String(v.pid) === pids.addressName)?.value ?? null;
+    const centerOwnedBy = centerProps.find((v) => String(v.pid) === pids.ownedBy)?.value ?? null;
     const centerLabels =
         centerProps.find((v) => String(v.pid) === pids.addressLabels)?.value ?? null;
 
-    // Merge directions — a NEID in both lists is "both"
-    const outSet = new Set(outNeids.filter((n) => n !== centerNeid));
+    // Build outgoing set from center's transfer property values
+    const outSet = new Set<string>();
+    const outCountByNeid = new Map<string, number>();
+    for (const t of centerTransfers) {
+        const target = String(t.value).padStart(20, '0');
+        if (target === centerNeid) continue;
+        outSet.add(target);
+        outCountByNeid.set(target, (outCountByNeid.get(target) ?? 0) + 1);
+    }
+
     const inSet = new Set(inNeids.filter((n) => n !== centerNeid));
     const allNeids = new Set([...outSet, ...inSet]);
 
@@ -159,6 +179,7 @@ export default defineEventHandler(async (event): Promise<WalletGraphResponse> =>
                 neid: centerNeid,
                 address: centerAddress,
                 name: centerName,
+                ownedBy: centerOwnedBy,
                 labels: centerLabels,
             },
             connections: [],
@@ -166,7 +187,7 @@ export default defineEventHandler(async (event): Promise<WalletGraphResponse> =>
         };
     }
 
-    // One call to get identity props for all connected wallets
+    // Fetch identity props for all candidates
     const connNeidList = [...allNeids];
     const allPropPids = [...identityPids, ...(pids.isContract ? [pids.isContract] : [])];
     const connProps = await elementalGetProperties(connNeidList, allPropPids);
@@ -178,37 +199,63 @@ export default defineEventHandler(async (event): Promise<WalletGraphResponse> =>
         const pidStr = String(v.pid);
         if (pidStr === pids.addressId) bag.address = v.value;
         if (pidStr === pids.addressName) bag.name = v.value;
+        if (pidStr === pids.ownedBy) bag.ownedBy = v.value;
         if (pidStr === pids.addressLabels) bag.labels = v.value;
         if (pidStr === pids.isContract) bag.isContract = v.value === 1 || v.value === 1.0;
     }
 
-    const connections: WalletConnection[] = connNeidList.map((neid) => {
+    // Build full list, prioritize wallets with name/ownedBy
+    const allConnections = connNeidList.map((neid) => {
         const p = connPropsByNeid.get(neid) ?? {};
         return {
             neid,
-            address: p.address ?? neid,
-            name: p.name ?? null,
-            labels: p.labels ?? null,
-            isContract: p.isContract ?? false,
+            address: (p.address as string) ?? neid,
+            name: (p.name as string) ?? null,
+            ownedBy: (p.ownedBy as string) ?? null,
+            labels: (p.labels as string) ?? null,
+            isContract: (p.isContract as boolean) ?? false,
             direction: directionOf(neid),
         };
     });
 
-    // Pre-cache connected addresses for fast click-to-explore
-    for (const conn of connections) {
+    const named = allConnections.filter((c) => c.name || c.ownedBy);
+    const anonymous = allConnections.filter((c) => !c.name && !c.ownedBy);
+    const selected = [...named, ...anonymous].slice(0, SAMPLE_PER_DIRECTION);
+
+    // Fetch incoming transfer counts for the selected connections
+    const selectedNeids = selected.map((c) => c.neid);
+    const selectedTransfers = await elementalGetProperties(selectedNeids, [pids.transfer]).catch(
+        () => [] as any[]
+    );
+
+    const inCountByNeid = new Map<string, number>();
+    for (const t of selectedTransfers) {
+        const target = String(t.value).padStart(20, '0');
+        if (target === centerNeid) {
+            inCountByNeid.set(t.eid, (inCountByNeid.get(t.eid) ?? 0) + 1);
+        }
+    }
+
+    const connections: WalletConnection[] = selected.map((c) => ({
+        ...c,
+        outCount: outCountByNeid.get(c.neid) ?? 0,
+        inCount: inCountByNeid.get(c.neid) ?? 0,
+    }));
+
+    for (const conn of allConnections) {
         if (conn.address.startsWith('0x')) {
             cacheAddress(conn.address, conn.neid);
         }
     }
 
-    const isSample =
-        outNeids.length >= SAMPLE_PER_DIRECTION || inNeids.length >= SAMPLE_PER_DIRECTION;
+    const isSample = allConnections.length > SAMPLE_PER_DIRECTION;
 
     return {
         center: {
             neid: centerNeid,
             address: centerAddress,
             name: centerName,
+            ownedBy: centerOwnedBy,
             labels: centerLabels,
         },
         connections,
