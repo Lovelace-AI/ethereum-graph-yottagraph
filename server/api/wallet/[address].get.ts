@@ -174,12 +174,22 @@ export default defineEventHandler(async (event): Promise<WalletGraphResponse> =>
     };
 
     if (allNeids.size === 0) {
+        // Still need to resolve center's owned_by if present
+        let resolvedCenterOwner: string | null = null;
+        if (centerOwnedBy) {
+            const padded = String(centerOwnedBy).padStart(20, '0');
+            const ownerProps = await elementalGetProperties([padded], ['8']).catch(
+                () => [] as any[]
+            );
+            const nameProp = ownerProps.find((v: any) => String(v.pid) === '8');
+            resolvedCenterOwner = nameProp ? String(nameProp.value) : null;
+        }
         return {
             center: {
                 neid: centerNeid,
                 address: centerAddress,
                 name: centerName,
-                ownedBy: centerOwnedBy,
+                ownedBy: resolvedCenterOwner,
                 labels: centerLabels,
             },
             connections: [],
@@ -204,6 +214,34 @@ export default defineEventHandler(async (event): Promise<WalletGraphResponse> =>
         if (pidStr === pids.isContract) bag.isContract = v.value === 1 || v.value === 1.0;
     }
 
+    // Resolve owned_by NEIDs to human-readable names (PID 8 = "name")
+    const ownerNeids = new Set<string>();
+    const centerOwnerRaw = centerOwnedBy ? String(centerOwnedBy).padStart(20, '0') : null;
+    if (centerOwnerRaw) ownerNeids.add(centerOwnerRaw);
+    for (const [, bag] of connPropsByNeid) {
+        if (bag.ownedBy) ownerNeids.add(String(bag.ownedBy).padStart(20, '0'));
+    }
+
+    const ownerNames = new Map<string, string>();
+    if (ownerNeids.size > 0) {
+        const ownerProps = await elementalGetProperties([...ownerNeids], ['8']).catch(
+            () => [] as any[]
+        );
+        for (const v of ownerProps) {
+            if (String(v.pid) === '8' && v.value) {
+                ownerNames.set(v.eid, String(v.value));
+            }
+        }
+    }
+
+    const resolveOwner = (rawNeid: any): string | null => {
+        if (!rawNeid) return null;
+        const padded = String(rawNeid).padStart(20, '0');
+        return ownerNames.get(padded) ?? null;
+    };
+
+    const resolvedCenterOwnedBy = resolveOwner(centerOwnedBy);
+
     // Build full list, prioritize wallets with name/ownedBy
     const allConnections = connNeidList.map((neid) => {
         const p = connPropsByNeid.get(neid) ?? {};
@@ -211,7 +249,7 @@ export default defineEventHandler(async (event): Promise<WalletGraphResponse> =>
             neid,
             address: (p.address as string) ?? neid,
             name: (p.name as string) ?? null,
-            ownedBy: (p.ownedBy as string) ?? null,
+            ownedBy: resolveOwner(p.ownedBy),
             labels: (p.labels as string) ?? null,
             isContract: (p.isContract as boolean) ?? false,
             direction: directionOf(neid),
@@ -255,7 +293,7 @@ export default defineEventHandler(async (event): Promise<WalletGraphResponse> =>
             neid: centerNeid,
             address: centerAddress,
             name: centerName,
-            ownedBy: centerOwnedBy,
+            ownedBy: resolvedCenterOwnedBy,
             labels: centerLabels,
         },
         connections,
